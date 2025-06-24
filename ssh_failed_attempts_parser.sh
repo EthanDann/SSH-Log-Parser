@@ -334,4 +334,60 @@ if [[ ${#LOG_FILES[@]} -eq 0 ]]; then
         LOG_FILES+=("/var/log/auth.log")
         print_info "Using default log file: /var/log/auth.log"
     else
-        print_error "No log files specified and no default auth.log
+        print_error "No log files specified and no default auth.log found"
+        usage
+        exit 1
+    fi
+fi
+
+# Validate and load whitelist
+if [[ -n "$IP_WHITELIST" ]]; then
+    if [[ ! -f "$IP_WHITELIST" ]]; then
+        print_error "Whitelist file $IP_WHITELIST does not exist"
+        exit 1
+    fi
+    while IFS= read -r ip; do
+        [[ -n "$ip" ]] && WHITELIST_IPS["$ip"]=1
+    done < "$IP_WHITELIST"
+    print_info "Loaded ${#WHITELIST_IPS[@]} IPs from whitelist"
+fi
+
+# Main execution
+main() {
+    print_info "Starting SSH failed attempts parser..."
+    print_info "Log files to process: ${LOG_FILES[*]}"
+
+    if [[ -n "$FROM_DATE" ]]; then
+        print_info "Filtering from date: $FROM_DATE"
+    fi
+
+    if [[ -n "$TO_DATE" ]]; then
+        print_info "Filtering to date: $TO_DATE"
+    fi
+
+    if [[ -n "$IP_WHITELIST" ]]; then
+        print_info "Using IP whitelist: $IP_WHITELIST"
+    fi
+
+    # Redirect output if specified
+    if [[ -n "$OUTPUT_FILE" ]]; then
+        exec > "$OUTPUT_FILE"
+        print_info "Output will be saved to: $OUTPUT_FILE"
+    fi
+
+    # Generate summary or detailed report
+    if [[ "$SUMMARY_ONLY" == "true" ]]; then
+        generate_summary
+    else
+        for log_file in "${LOG_FILES[@]}"; do
+            parse_log_file "$log_file"
+            [[ -f "${log_file}.1" ]] && parse_log_file "${log_file}.1"
+            [[ -f "${log_file}.gz" ]] && zcat "${log_file}.gz" | parse_log_file /dev/stdin
+        done
+    fi
+
+    print_success "Parsing completed successfully"
+}
+
+# Run main function
+main "$@"
