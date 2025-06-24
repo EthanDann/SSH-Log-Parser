@@ -24,7 +24,7 @@ The script detects the following failed SSH attempt patterns:
 
 1. Download the script:
 ```bash
-wget https://raw.githubusercontent.com/your-repo/ssh_failed_attempts_parser.sh
+wget https://raw.githubusercontent.com/EthanDann/SSH-Log-Parser/main/ssh_failed_attempts_parser.sh
 ```
 
 2. Make it executable:
