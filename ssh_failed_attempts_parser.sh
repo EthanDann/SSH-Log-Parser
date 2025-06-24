@@ -90,82 +90,78 @@ is_whitelisted() {
 parse_log_file() {
     local log_file="$1"
     local temp_file=$(mktemp)
-    
+
     print_info "Parsing $log_file..."
-    
-    # Check if file exists and is readable
-    if [[ ! -f "$log_file" ]]; then
-        print_error "Log file $log_file does not exist"
-        return 1
-    fi
-    
-    if [[ ! -r "$log_file" ]]; then
-        print_error "Log file $log_file is not readable"
-        return 1
-    fi
-    
-    # Extract failed SSH attempts with different patterns
-    # Pattern 1: Failed password for user
-    # Pattern 2: Invalid user
-    # Pattern 3: Connection closed by invalid user
-    # Pattern 4: PAM authentication failure
-    # Pattern 5: Failed keyboard-interactive/pam
-    
+
+    # Check file existence and readability
+    [[ ! -f "$log_file" ]] && { print_error "Log file $log_file does not exist"; return 1; }
+    [[ ! -r "$log_file" ]] && { print_error "Log file $log_file is not readable"; return 1; }
+
+    # Extract failed SSH attempts
     grep -E "(Failed password|Invalid user|Connection closed by invalid user|PAM authentication failure|Failed keyboard-interactive)" "$log_file" > "$temp_file" 2>/dev/null || true
-    
-    if [[ ! -s "$temp_file" ]]; then
-        print_warning "No failed SSH attempts found in $log_file"
-        rm -f "$temp_file"
-        return 0
-    fi
-    
-    # Process each line
-    while IFS= read -r line; do
-        # Extract timestamp, IP, user, and other relevant info
-        local timestamp=""
-        local ip=""
-        local user=""
-        local message=""
-        
-        # Try different log formats
-        if [[ $line =~ ^([A-Za-z]{3}\s+[0-9]{1,2}\s+[0-9]{2}:[0-9]{2}:[0-9]{2}) ]]; then
-            # Format: Jan 1 12:00:00
-            timestamp=$(echo "$line" | grep -oE '^[A-Za-z]{3}\s+[0-9]{1,2}\s+[0-9]{2}:[0-9]{2}:[0-9]{2}')
-        elif [[ $line =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}) ]]; then
-            # Format: 2024-01-01T12:00:00
-            timestamp=$(echo "$line" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}')
-        fi
-        
-        # Extract IP address
-        ip=$(echo "$line" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
-        
-        # Extract username
-        if [[ $line =~ "Failed password for" ]]; then
-            user=$(echo "$line" | grep -oE 'Failed password for [^ ]+' | awk '{print $4}')
-        elif [[ $line =~ "Invalid user" ]]; then
-            user=$(echo "$line" | grep -oE 'Invalid user [^ ]+' | awk '{print $3}')
-        fi
-        
-        # Extract message
-        message=$(echo "$line" | sed 's/^[^:]*:[^:]*:[^:]*:[^:]* //')
-        
-        # Apply date filters if specified
-        if [[ -n "$FROM_DATE" || -n "$TO_DATE" ]]; then
-            local line_timestamp=$(date_to_timestamp "$timestamp")
-            if [[ -n "$FROM_DATE" && $line_timestamp -lt $(date_to_timestamp "$FROM_DATE") ]]; then
-                continue
-            fi
-            if [[ -n "$TO_DATE" && $line_timestamp -gt $(date_to_timestamp "$TO_DATE") ]]; then
-                continue
-            fi
-        fi
-        
+
+    [[ ! -s "$temp_file" ]] && { print_warning "No failed SSH attempts found in $log_file"; rm -f "$temp_file"; return 0; }
+
+    # Process with awk for efficiency
+    awk -v verbose="$VERBOSE" -v from_date="$FROM_DATE" -v to_date="$TO_DATE" '
+    function date_to_timestamp(date) {
+        # Simplified; use external date command for accuracy
+        cmd = "date -d \"" date "\" +%s 2>/dev/null"
+        cmd | getline ts
+        close(cmd)
+        return ts ? ts : 0
+    }
+    {
+        # Extract timestamp
+        if ($0 ~ /^[A-Za-z]{3}\s+[0-9]{1,2}\s+[0-9]{2}:[0-9]{2}:[0-9]{2}/) {
+            timestamp = $1 " " $2 " " $3
+        } else if ($0 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}/) {
+            timestamp = $1
+        } else {
+            next
+        }
+
+        # Extract IP (IPv4 only for simplicity)
+        ip = ""
+        for (i=1; i<=NF; i++) {
+            if ($i ~ /^([0-9]{1,3}\.){3}[0-9]{1,3}$/) {
+                ip = $i
+                break
+            }
+        }
+
+        # Extract user
+        user = ""
+        if ($0 ~ /Failed password for/) {
+            for (i=1; i<=NF; i++) {
+                if ($i == "for" && i+1 <= NF) {
+                    user = $(i+1)
+                    break
+                }
+            }
+        } else if ($0 ~ /Invalid user/) {
+            for (i=1; i<=NF; i++) {
+                if ($i == "user" && i+1 <= NF) {
+                    user = $(i+1)
+                    break
+                }
+            }
+        }
+
+        # Apply date filters
+        if (from_date || to_date) {
+            ts = date_to_timestamp(timestamp)
+            if (from_date && ts < date_to_timestamp(from_date)) next
+            if (to_date && ts > date_to_timestamp(to_date)) next
+        }
+
+        # Output (skip whitelisted IPs in main script)
+        if (verbose == "true") print "[DEBUG] Processing: " $0
+        print timestamp "|" ip "|" user "|" $0
+    }' "$temp_file" | while IFS='|' read -r timestamp ip user message; do
         # Skip whitelisted IPs
-        if is_whitelisted "$ip"; then
-            continue
-        fi
-        
-        # Output the parsed information
+        is_whitelisted "$ip" && continue
+
         if [[ "$SUMMARY_ONLY" == "true" ]]; then
             echo "$timestamp|$ip|$user|$message"
         else
@@ -175,9 +171,8 @@ parse_log_file() {
             echo "Message: $message"
             echo "---"
         fi
-        
-    done < "$temp_file"
-    
+    done
+
     rm -f "$temp_file"
 }
 
