@@ -1,6 +1,8 @@
 # SSH Failed Attempts Parser
 
-A comprehensive bash script to parse SSH log files for failed login attempts. This tool helps security administrators identify potential brute force attacks and unauthorized access attempts.
+This project was entirely done by Cursor! No deception here,  I was curious of the capability of AI when it comes to programming and cybersecurity, so gave it a whirl here. It coded this in probably about an hour, and I'm sure it can do much more if given the right prompts. Pretty cool!
+
+This is a comprehensive bash script to parse SSH log files for failed login attempts. This tool helps security administrators identify potential brute force attacks and unauthorized access attempts.
 
 ## Features
 
